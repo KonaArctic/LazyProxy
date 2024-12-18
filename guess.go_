@@ -1,0 +1,136 @@
+package main
+import "bufio"
+import "bytes"
+import "crypto/tls"
+import "io"
+import "net"
+import "net/http"
+import "strings"
+import "time"
+
+func Guess( reader io.Reader )string {
+    var buffer [ ]byte = make( [ ]byte , 0 , 4096 )
+    length , _ := io.ReadFull( reader , buffer[ 0 : cap( buffer ) ] )
+    buffer = buffer[ 0 : length ]
+    if length == 0 {
+        return "" }
+    var hostnm string
+    hostnm = GuessTLS( bytes.NewReader( buffer ) )
+    if hostnm != "" {
+        return hostnm }
+    hostnm = GuessHTTP( bytes.NewReader( buffer ) )
+    if hostnm != "" {
+        return hostnm }
+    return ""
+}
+
+/*
+var guessList [ ]func( io.Reader )string = [ ]func( io.Reader )string{
+    GuessHTTP ,
+    GuessTLS ,
+}
+
+func Guess( reader io.Reader )string {  // Hmm ... This code seems more complicated than necessary 
+    var nomchn chan string = make( chan string , 4 )
+    subrds := make( [ ]chan any , 0 , 4 )
+    for key , value := range guessList {
+        subrds = append( subrds , make( chan any , 1 ) )
+        go func( ){
+            nomchn <- value( & shareRead{
+                myself : subrds[ key ] ,
+            } )
+            for <- subrds[ key ] != nil { }
+        }( )
+    }
+    go func( ){
+        buffer := make( [ ]byte , 0 , 4096 )
+        for {
+            length , err := reader.Read( buffer[ 0 : cap( buffer ) ] )
+            if err != nil {
+                for _ , value := range subrds {
+                    value <- err }
+                break }
+            for _ , value := range subrds {
+                value <- buffer[ 0 : length ] }
+        }
+    }( )
+    for _ , _ = range guessList {
+        hostnm := <- nomchn
+        if hostnm != "" {
+            return hostnm }
+    }
+    return ""
+}
+
+// Share a reader, blocking
+type shareRead struct{
+    buffer [ ]byte
+    myself chan any
+}
+func ( self * shareRead )Read( buffer [ ]byte )( int , error ) {
+    if len( self.buffer ) == 0 {
+        b := <- self.myself
+        if _ , ok := b.( error ) ; ok {
+            return 0 , b.( error ) }
+        self.buffer = b.( [ ]byte )
+    }
+    length := copy( buffer , self.buffer )
+    self.buffer = self.buffer[ length : len( self.buffer ) ]
+    return length , nil
+}*/
+
+// GuessHTTP tries to parse HTTP virtual host
+func GuessHTTP( reader io.Reader )string {
+    var reques * http.Request
+    reques , _ = http.ReadRequest( bufio.NewReader( reader ) )
+    if reques == nil {
+        return "" }
+    return strings.TrimRight( reques.Host , ":0123456789" )
+}
+
+// GuessTLS tries to parse TLS virtual host
+func GuessTLS( reader io.Reader )string {
+    var tlssni string
+    _ , _ = ( tls.Server( fakeConn{
+        Reader : io.MultiReader( reader , bytes.NewReader( make( [ ]byte , 100 , 100 ) ) ) ,
+        Writer : io.Discard ,
+    } , & tls.Config{
+        GetCertificate : func( hello * tls.ClientHelloInfo )( * tls.Certificate , error ){
+            tlssni = hello.ServerName
+            return nil , nil
+        } ,
+    } ) ).Write( [ ]byte{ } )
+    return tlssni
+}
+
+// Fake net.Conn
+type fakeConn struct{
+    io.Reader
+    io.Writer
+    io.Closer
+}
+func ( self fakeConn )LocalAddr( )net.Addr {
+    return fakeAddr{ }
+}
+func ( self fakeConn )RemoteAddr( )net.Addr {
+    return fakeAddr{ }
+}
+func ( self fakeConn )SetDeadline( tlimit time.Time )error {
+    return nil
+}
+func ( self fakeConn )SetReadDeadline( tlimit time.Time )error {
+    return nil
+}
+func ( self fakeConn )SetWriteDeadline( tlimit time.Time )error {
+    return nil
+}
+
+// Fake net.Addr
+type fakeAddr struct{ }
+func ( self fakeAddr )Network( )string {
+    return "tcp"
+}
+func ( self fakeAddr )String( )string {
+    return "localhost:80"
+}
+
