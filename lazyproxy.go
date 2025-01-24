@@ -82,11 +82,12 @@ func (self *LazyProxy) Listen() error {
 						}
 					}
 					go func() {
-						if _, ok := server.(io.ReaderFrom); ok {
+						/*if _, ok := server.(io.ReaderFrom); ok {
 							_, _ = server.(io.ReaderFrom).ReadFrom(client)
 						} else {
 							_, _ = client.WriteTo(server)
-						}
+						}*/
+						_, _ = io.Copy(server, client)
 						_ = server.Close()
 					}()
 					go func() {
